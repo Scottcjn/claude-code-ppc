@@ -150,3 +150,12 @@ MIT
 ---
 
 *Built by [Elyan Labs](https://github.com/Scottcjn)*
+
+
+## 中文简介
+
+Claude Code Ppc - Elyan Labs 项目
+
+为中文用户提供中文文档支持。
+
+Contributed by eelaine-wzw
