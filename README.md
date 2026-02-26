@@ -1,5 +1,6 @@
 # Claude Code for PowerPC
 
+[![BCOS Certified](https://img.shields.io/badge/BCOS-Certified-brightgreen?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxTDMgNXY2YzAgNS41NSAzLjg0IDEwLjc0IDkgMTIgNS4xNi0xLjI2IDktNi40NSA5LTEyVjVsLTktNHptLTIgMTZsLTQtNCA1LjQxLTUuNDEgMS40MSAxLjQxTDEwIDE0bDYtNiAxLjQxIDEuNDFMMTAgMTd6Ii8+PC9zdmc+)](BCOS.md)
 **World's first: Claude Code running natively on Mac OS X Leopard (2007)**
 
 A full Claude Code-like CLI running on a **Power Mac G5** (PowerPC 970, Mac OS X 10.5 Leopard) with **direct TLS 1.2 connections** to the Anthropic API. No proxy. No relay. No modern machine in the middle.
