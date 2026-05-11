@@ -968,5 +968,18 @@ function printGoodbye() {
     print("");
 }
 
-// ============ RUN ============
-main();
+// ============ EXPORTS / RUN ============
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+        C: C,
+        renderMarkdown: renderMarkdown,
+        repeatStr: repeatStr,
+        estimateCost: estimateCost,
+        formatCost: formatCost,
+        processFileReferences: processFileReferences
+    };
+}
+
+if (typeof require === "undefined" || !require.main || require.main === module) {
+    main();
+}
