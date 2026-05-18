@@ -22,7 +22,7 @@ An agentic coding CLI — Claude reads files, writes code, executes shell comman
 
 ## Requirements
 
-- [**node_ppc**](https://github.com/Scottcjn/node-ppc) — custom QuickJS + mbedTLS runtime for PowerPC Mac OS X
+- **node_ppc** — custom QuickJS + mbedTLS runtime for PowerPC Mac OS X
 - An Anthropic API key or OAuth credentials (`~/.claude/.credentials.json`)
 
 ## Quick Start
@@ -140,7 +140,7 @@ The `node_ppc` runtime uses QuickJS, not V8. This means:
 
 ## Related Projects
 
-- [**node-ppc**](https://github.com/Scottcjn/node-ppc) — The runtime that makes this possible (QuickJS + mbedTLS for PowerPC)
+- **node_ppc runtime** — The runtime that makes this possible (QuickJS + mbedTLS for PowerPC)
 - [rust-ppc-tiger](https://github.com/Scottcjn/rust-ppc-tiger) — Rust compiler for PowerPC Mac OS X
 - [ppc-compilers](https://github.com/Scottcjn/ppc-compilers) — Pre-built GCC 7/10 for PowerPC
 
