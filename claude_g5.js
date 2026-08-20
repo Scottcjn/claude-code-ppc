@@ -214,18 +214,40 @@ function toolWrite(params) {
 
 function toolEdit(params) {
     try {
+        var oldString = params.old_string;
+        if (typeof oldString !== "string" || oldString === "") {
+            // An empty old_string matches at offset 0, so String.replace would
+            // silently prepend new_string instead of editing anything.
+            return { error: "old_string must be a non-empty string" };
+        }
+        var newString = (params.new_string === null || params.new_string === undefined)
+            ? ""
+            : String(params.new_string);
+
         var content = fs.readFileSync(params.file_path, "utf8");
-        if (content.indexOf(params.old_string) === -1) {
+        var index = content.indexOf(oldString);
+        if (index === -1) {
             return { error: "old_string not found in file" };
         }
+
+        // Splice by index instead of String.replace: with a string pattern,
+        // replace() still expands "$" sequences in the replacement, so
+        // new_string values that are perfectly ordinary code ("$$" for a shell
+        // PID, $'...' quoting, "$&" in a sed script) get rewritten on the way
+        // to disk. The bytes Claude asked for must be the bytes we write.
         var newContent;
+        var replacements;
         if (params.replace_all) {
-            newContent = content.split(params.old_string).join(params.new_string);
+            var pieces = content.split(oldString);
+            replacements = pieces.length - 1;
+            newContent = pieces.join(newString);
         } else {
-            newContent = content.replace(params.old_string, params.new_string);
+            replacements = 1;
+            newContent = content.substring(0, index) + newString +
+                content.substring(index + oldString.length);
         }
         fs.writeFileSync(params.file_path, newContent);
-        return { success: true, path: params.file_path };
+        return { success: true, path: params.file_path, replacements: replacements };
     } catch (e) {
         return { error: String(e) };
     }
@@ -484,6 +506,66 @@ function executeTool(name, input) {
 // ============ CONVERSATION ENGINE ============
 var conversationHistory = [];
 
+// ---- history invariants -------------------------------------------------
+// The Messages API is strict about tool turns: every tool_use block must be
+// answered by a tool_result in the *next* message, and every tool_result must
+// answer a tool_use in the *previous* one. A history that breaks either rule
+// is rejected on every subsequent request, not just once — so a local slip
+// here bricks the session instead of costing one call.
+
+function hasBlockType(message, type) {
+    var content = message ? message.content : null;
+    if (!content || !Array.isArray(content)) return false;
+    for (var i = 0; i < content.length; i++) {
+        if (content[i] && content[i].type === type) return true;
+    }
+    return false;
+}
+
+// A real user turn: typed text, or any user message that is not tool output.
+function isPlainUserTurn(message) {
+    if (!message || message.role !== "user") return false;
+    if (typeof message.content === "string") return true;
+    return !hasBlockType(message, "tool_result");
+}
+
+// Drop the tail of a failed exchange. Popping a single message is not enough:
+// mid-loop the last message is the tool_result batch, and removing only that
+// leaves the assistant's tool_use unanswered. Unwind to the last completed
+// assistant answer (or to an empty history) so the next turn is always valid.
+function rollbackToLastCompleteTurn(history) {
+    while (history.length > 0) {
+        var last = history[history.length - 1];
+        if (last.role === "assistant" && !hasBlockType(last, "tool_use")) break;
+        history.pop();
+    }
+    return history;
+}
+
+// A tail may start on a typed user turn or on any assistant message (an
+// assistant message always opens an exchange, so nothing it needs was left
+// behind). It may never start on tool output: that orphans the tool_result.
+function isCompactBoundary(message) {
+    if (!message) return false;
+    if (message.role === "assistant") return true;
+    return isPlainUserTurn(message);
+}
+
+// Where the kept tail may start when compacting.
+function findSafeCompactBoundary(history, keepTail) {
+    var preferred = history.length - keepTail;
+    if (preferred < 1) preferred = 1;
+    for (var i = preferred; i < history.length; i++) {
+        if (isCompactBoundary(history[i])) return i;
+    }
+    // Nothing safe inside the requested window — keep more than asked rather
+    // than cut in the middle of a tool exchange.
+    for (var j = preferred - 1; j >= 1; j--) {
+        if (isCompactBoundary(history[j])) return j;
+    }
+    return -1;
+}
+
 function runConversation(userMessage) {
     // Handle @file references - inject file content
     var processedMessage = processFileReferences(userMessage);
@@ -503,8 +585,10 @@ function runConversation(userMessage) {
 
         if (response.error) {
             print(C.red + "  Error: " + response.error + C.reset);
-            // Remove failed message from history
-            conversationHistory.pop();
+            // Remove the whole failed exchange, not just the last message —
+            // a lone pop() would leave an unanswered tool_use behind and
+            // every later request in this session would be rejected.
+            rollbackToLastCompleteTurn(conversationHistory);
             return;
         }
 
@@ -771,23 +855,44 @@ function printHistory() {
 }
 
 function compactHistory() {
-    // Keep first user message and last 6 messages
+    // Keep first user message and roughly the last 6 messages
     if (conversationHistory.length <= 8) return;
 
+    // Cutting blindly at length-6 can land inside a tool exchange, which
+    // leaves a tool_result answering a tool_use that is no longer there.
+    var start = findSafeCompactBoundary(conversationHistory, 6);
+    if (start <= 1) return;  // nothing can be dropped safely
+
+    var first = conversationHistory[0];
     var kept = [];
-    // Keep first user message for context
-    kept.push(conversationHistory[0]);
-    // Add a summary marker
-    kept.push({
-        role: "assistant",
-        content: [{ type: "text", text: "[Earlier conversation compacted - " + (conversationHistory.length - 7) + " messages removed]" }]
-    });
-    // Keep last 6 messages
-    var start = conversationHistory.length - 6;
+    if (conversationHistory[start].role === "assistant") {
+        // The tail opens with an assistant turn, so the marker takes the user
+        // slot and carries the original request instead of duplicating it.
+        kept.push({ role: "user", content: compactionNote(first, start) });
+    } else {
+        // Keep the first user message for context, then note the cut.
+        kept.push(first);
+        kept.push({
+            role: "assistant",
+            content: [{ type: "text", text: "[Earlier conversation compacted - " + (start - 1) + " messages removed]" }]
+        });
+    }
+    // Keep the recent tail, starting on a safe boundary
     for (var i = start; i < conversationHistory.length; i++) {
         kept.push(conversationHistory[i]);
     }
     conversationHistory = kept;
+}
+
+// Summary line used when the kept tail starts with an assistant turn.
+function compactionNote(firstMessage, removedCount) {
+    var note = "[Earlier conversation compacted - " + removedCount + " messages removed]";
+    var original = firstMessage ? firstMessage.content : null;
+    if (typeof original === "string" && original) {
+        if (original.length > 500) original = original.substring(0, 500) + " [...]";
+        note += "\n\nOriginal request: " + original;
+    }
+    return note;
 }
 
 function exportConversation(filename) {
@@ -976,7 +1081,17 @@ if (typeof module !== "undefined" && module.exports) {
         repeatStr: repeatStr,
         estimateCost: estimateCost,
         formatCost: formatCost,
-        processFileReferences: processFileReferences
+        processFileReferences: processFileReferences,
+        toolEdit: toolEdit,
+        hasBlockType: hasBlockType,
+        isPlainUserTurn: isPlainUserTurn,
+        rollbackToLastCompleteTurn: rollbackToLastCompleteTurn,
+        isCompactBoundary: isCompactBoundary,
+        findSafeCompactBoundary: findSafeCompactBoundary,
+        compactHistory: compactHistory,
+        runConversation: runConversation,
+        getHistory: function () { return conversationHistory; },
+        setHistory: function (history) { conversationHistory = history; }
     };
 }
 
